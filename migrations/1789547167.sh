@@ -145,8 +145,8 @@ for network_file in "${network_files[@]}"; do
       echo "Skipping $connection_name: no usable saved password"
       continue
     fi
-    # iwd uses one .psk file for WPA2 and WPA3 alike. wpa-psk joins WPA2 and
-    # transition networks; a WPA3-only network has to be joined again.
+    # iwd uses one .psk file for WPA2 and WPA3 alike, and so does wpa-psk. WPA3
+    # needs the passphrase, so a network with only its derived key is WPA2 only.
     wifi_security=$'\n[wifi-security]\nkey-mgmt=wpa-psk\npsk='"$psk"$'\n'
   fi
 
