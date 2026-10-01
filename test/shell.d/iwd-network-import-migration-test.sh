@@ -19,6 +19,7 @@ export PATH="$tmp_dir/bin:$PATH" REAL_NMCLI="$real_nmcli" CALL_LOG="$tmp_dir/cal
 cat > "$tmp_dir/bin/sudo" <<'SH'
 #!/bin/bash
 printf 'sudo %s\n' "$1" >> "$CALL_LOG"
+[[ ${SUDO_FAIL:-} != "$1" ]] || exit 1
 "$@"
 SH
 cat > "$tmp_dir/bin/nmcli" <<'SH'
@@ -81,10 +82,10 @@ run_migration() {
 setup_stores
 output=$(NM_RUNNING=1 run_migration)
 
-home="$tmp_dir/nm/iwd-$(printf 'Home Net' | od -An -v -tx1 | tr -d ' \n').nmconnection"
-coffee="$tmp_dir/nm/iwd-e29895.nmconnection"
-cafe="$tmp_dir/nm/iwd-43616665.nmconnection"
-static="$tmp_dir/nm/iwd-537461746963.nmconnection"
+home="$tmp_dir/nm/iwd-$(printf 'Home Net' | od -An -v -tx1 | tr -d ' \n')-psk.nmconnection"
+coffee="$tmp_dir/nm/iwd-e29895-psk.nmconnection"
+cafe="$tmp_dir/nm/iwd-43616665-open.nmconnection"
+static="$tmp_dir/nm/iwd-537461746963-psk.nmconnection"
 
 for profile in "$home" "$coffee" "$cafe" "$static"; do
   [[ -f $profile ]] || fail "imported profile exists: $profile" "$output"
@@ -124,7 +125,7 @@ NM_RUNNING=1 run_migration >/dev/null
 rm "$tmp_dir/marker" "$cafe"
 NM_RUNNING=1 run_migration >/dev/null
 (( $(find "$tmp_dir/nm" -type f | wc -l) == 4 )) || fail "a retried import only adds what is missing"
-grep -Fxq "load 3" "$CALL_LOG" || fail "a retried import only loads what it added" "$(cat "$CALL_LOG")"
+grep -Fxq "load 6" "$CALL_LOG" || fail "a retried import loads what it added and what an interrupted run never loaded" "$(cat "$CALL_LOG")"
 pass "the import is idempotent"
 
 setup_stores
@@ -155,3 +156,18 @@ if NM_RUNNING=1 run_migration >/dev/null 2>&1; then
 fi
 [[ ! -e $tmp_dir/marker ]] || fail "a failed import is not marked complete"
 pass "storage errors leave the migration pending"
+
+setup_stores
+if SUDO_FAIL=find NM_RUNNING=1 run_migration >/dev/null 2>&1; then
+  fail "a failed listing of the iwd store must leave the migration pending"
+fi
+[[ ! -e $tmp_dir/marker ]] || fail "a failed listing is not marked complete"
+pass "a failed listing of the iwd store leaves the migration pending"
+
+setup_stores
+printf '[Security]\nPassphrase=guestpass\n' > "$tmp_dir/iwd/Guest.psk"
+printf '[Settings]\nAutoConnect=true\n' > "$tmp_dir/iwd/Guest.open"
+NM_RUNNING=1 run_migration >/dev/null
+[[ $(profile_value "$tmp_dir/nm/iwd-4775657374-psk.nmconnection" wifi-security psk) == "'guestpass'" ]] || fail "the protected network keeps its password"
+[[ $(profile_value "$tmp_dir/nm/iwd-4775657374-open.nmconnection" wifi-security key-mgmt) == "<absent>" ]] || fail "the open network of the same name is imported too"
+pass "an open and a protected network with one name are both imported"

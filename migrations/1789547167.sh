@@ -66,14 +66,21 @@ nm_running=false
 known_ssids=()
 if nmcli -t general status >/dev/null 2>&1; then
   nm_running=true
+  connections=$(nmcli -t -f TYPE,UUID connection show)
   while IFS=: read -r type uuid; do
     [[ $type == "802-11-wireless" ]] || continue
     known_ssids+=("$(nmcli --escape no -g 802-11-wireless.ssid connection show "$uuid")")
-  done < <(nmcli -t -f TYPE,UUID connection show)
+  done <<<"$connections"
 fi
 
 imported=()
-mapfile -t network_files < <(sudo find "$iwd_dir" -maxdepth 1 -type f \( -name '*.psk' -o -name '*.open' -o -name '*.8021x' \) -printf '%f\n' | sort)
+# Listed into a variable, since a failed listing read through a process
+# substitution would not stop the migration and would mark the import complete.
+network_files=()
+network_list=$(sudo find "$iwd_dir" -maxdepth 1 -type f \( -name '*.psk' -o -name '*.open' -o -name '*.8021x' \) -printf '%f\n' | sort)
+if [[ -n $network_list ]]; then
+  mapfile -t network_files <<<"$network_list"
+fi
 
 for network_file in "${network_files[@]}"; do
   security=${network_file##*.}
@@ -111,8 +118,13 @@ for network_file in "${network_files[@]}"; do
   for known_ssid in "${known_ssids[@]}"; do
     [[ $known_ssid == "$ssid" ]] && already_known=true
   done
-  profile="$nm_dir/iwd-$ssid_hex.nmconnection"
-  if [[ $already_known == true ]] || sudo test -e "$profile"; then
+  [[ $already_known == false ]] || continue
+
+  # iwd keeps an open and a protected network of the same name apart, so do we.
+  # A profile an interrupted run wrote was never loaded, so load it now.
+  profile="$nm_dir/iwd-$ssid_hex-$security.nmconnection"
+  if sudo test -e "$profile"; then
+    imported+=("$profile")
     continue
   fi
 
